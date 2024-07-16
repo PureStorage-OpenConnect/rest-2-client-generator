@@ -148,6 +148,72 @@ class JavaHandler(LaunguageHandlerBase):
 
         return updated_file_count
 
+    def _overwrite_marked_qos_values_with_empty_str(self, source_root):
+        # in this function we do the following
+        # 1. inject import statement for gson
+        # 2. inject function to replace bandwidth/iops with empty string if set to -1
+        # 3. replace current line Object localVarPostBody = volumeGroup; with call to above function
+
+        injected_fn = """
+    public Object overwriteMarkedFieldsWithEmptyString(VolumeGroup vg) {
+        boolean resetBandwidth = vg.getQos() != null && vg.getQos().getBandwidthLimit() != null && vg.getQos().getBandwidthLimit() == -1L;
+        boolean resetIops = vg.getQos() != null && vg.getQos().getIopsLimit() != null && vg.getQos().getIopsLimit() == -1L;
+        if (!resetBandwidth && !resetIops) {
+            return vg;
+        }
+
+        Gson gson = new Gson();
+        String json = gson.toJson(vg);
+        Map<String, Object> data = gson.fromJson(json, new TypeToken<Map<String, Object>>() {}.getType());
+        if (data.get("qos") instanceof Map) {
+            Map<String, Object> qos = (Map<String, Object>) data.get("qos");
+            if (resetBandwidth) {
+                qos.put("bandwidth_limit", "");
+            }
+            if (resetIops) {
+                qos.put("iops_limit", "");
+            }
+        }
+        return data;
+    }\n
+"""
+        inject_import = 'import com.google.gson.Gson;\n'
+        find_function_pattern =  (r"public\s+(?:[\w\.]+\.)?Call\s+api23VolumeGroupsPatchCall\s*\([^)]*\)\s*throws\s*ApiException\s*\{")
+        find_class_str = 'public class VolumeGroupsApi {\n'
+        find_line_str = 'Object localVarPostBody = volumeGroup;\n'
+        inject_line = 'Object localVarPostBody = this.overwriteMarkedFieldsWithEmptyString(volumeGroup);'
+
+        full_paths = glob.glob(source_root + '/**/VolumeGroupsApi.java', recursive=True)
+        if (len(full_paths) == 0):
+            print("skipping qos object minipulation")
+            return
+        qos_file_path = full_paths[0]
+
+        with open(qos_file_path, 'r') as qos_file:
+            data = qos_file.read()
+
+            class_start = data.find(find_class_str)
+            class_end = class_start + len(find_class_str)
+            if class_start == -1:
+                print("failed to find class")
+                return
+
+            match = re.search(find_function_pattern, data)
+            if not match:
+                print("failed to find function")
+                return
+
+            function_start = match.start()
+            replace_line_start = data.find(find_line_str, function_start)
+            replace_line_end = replace_line_start + len(find_line_str)
+
+            changed = data[:class_start] + inject_import + data[class_start : class_end] + injected_fn + data[class_end:replace_line_start] + inject_line + data[replace_line_end:]
+
+        with open(qos_file_path, 'w') as qos_file:
+            print("injecting function to overwrite Qos parameters with empty string if its marked with -1")
+            qos_file.write(changed)
+
+
     def _remove_duplicate_models(self, source_root):
         full_paths = glob.glob(source_root + '/**/*.java', recursive=True)
         files = {}
@@ -250,6 +316,7 @@ class JavaHandler(LaunguageHandlerBase):
             self._add_common_dependency_to_pom(os.path.join(generator_output_dir, 'pom.xml'), artifact_version)
         print("Removing duplicate models")
         self._remove_duplicate_models((os.path.join(generator_output_dir, "src")))
+        self._overwrite_marked_qos_values_with_empty_str((os.path.join(generator_output_dir, "src")))
 
 
 def get_language_handler(product: str, language: str) -> LaunguageHandlerBase:
