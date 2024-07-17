@@ -14,6 +14,8 @@ from scripts.file_utils import replace_text
 import shutil, os, re, glob
 import json
 
+# shadow_nullable_varibles is a list of pairs of file_name to list of variables in file that require shadowing
+shadow_nullable_varibles = [("Qos", ["bandwidthLimit", "iopsLimit"])]
 
 def get_config_file(config_dir, version):
     return os.path.join(config_dir, f"config{version}.json")
@@ -207,14 +209,21 @@ class JavaHandler(LaunguageHandlerBase):
         pass
 
 
-    def _modifyShadowNullableVariables(self, source_root, modify_variables):
+    def _modify_shadow_nullable_variables(self, source_root, modify_variables):
+        """
+        modifies the specified variables in specified files by changing type to Object and introducing a clearXXX function
+        that sets the value of varible to empty string.
+
+        :param source_root: directory containing all the generated files that require modification
+        :param modify_variables: is a list of pairs of file_name to list of variables in file that require shadowing
+        """
 
         for (file_name, variables) in modify_variables:
 
             full_paths = glob.glob(f'{source_root}/**/{file_name}.java', recursive=True)
             if len(full_paths) == 0:
-                print(f"_modifyShadowNullableVariables: failed to find file {full_path}")
-                return
+                raise Exception(f"_modifyShadowNullableVariables: failed to find file {full_paths}")
+
             file_path = full_paths[0]
 
             with open(file_path, 'r') as file:
@@ -225,8 +234,7 @@ class JavaHandler(LaunguageHandlerBase):
                     member_type_regex = r'(?:public|protected|private)\s(\w+)\s(?:' + variable + r'[;\s=])'
                     match = re.search(member_type_regex, file_contents)
                     if not match:
-                        print("_modifyShadowNullableVariables: failed to find the member variable type")
-                        return
+                        raise Exception("_modifyShadowNullableVariables: failed to find the member variable type")
                     member_line_start = match.start()
                     member_line_end = match.end()
                     original_member_type = match.group(1)
@@ -234,14 +242,12 @@ class JavaHandler(LaunguageHandlerBase):
                     replaced_member_type_str = member_type_str.replace(original_member_type, "Object")
 
                     # replace get method return
-                    breakpoint()
                     return_body_regex = r'(?:{\n)\s+(return\s' + variable + r';)(?:\n\s+})'
                     new_return = f'return ({variable} instanceof Double) ? ((Double) {variable}).{original_member_type.lower()}Value() : null;'
 
                     match = re.search(return_body_regex, file_contents)
                     if not match:
-                        print("_modifyShadowNullableVariables: failed to find return value of getter")
-                        return
+                        raise Exception("_modifyShadowNullableVariables: failed to find return value of getter")
 
                     return_body_start = match.start()
                     return_body_end = match.end()
@@ -302,7 +308,7 @@ class JavaHandler(LaunguageHandlerBase):
             self._add_common_dependency_to_pom(os.path.join(generator_output_dir, 'pom.xml'), artifact_version)
         print("Removing duplicate models")
         self._remove_duplicate_models((os.path.join(generator_output_dir, "src")))
-        self._modifyShadowNullableVariables((os.path.join(generator_output_dir, "src")), [("Qos", ["bandwidthLimit", "iopsLimit"])])
+        self._modify_shadow_nullable_variables((os.path.join(generator_output_dir, "src")), shadow_nullable_varibles)
 
 
 def get_language_handler(product: str, language: str) -> LaunguageHandlerBase:
