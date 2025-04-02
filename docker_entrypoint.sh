@@ -14,4 +14,4 @@
 
 cd /source
 git clone https://github.com/PureStorage-OpenConnect/swagger.git
-python3 build.py ./swagger/html /build $@
+python3 build.py ./swagger/html/specs /build $@
