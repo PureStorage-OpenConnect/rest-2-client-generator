@@ -18,6 +18,7 @@ import yaml
 from yaml.resolver import Resolver
 import os
 import glob
+from copy import deepcopy
 
 
 # Prevent the interpreter from thinking "on" is a boolean
@@ -118,6 +119,51 @@ def _traverse_required(obj):
             if len(required_props) > 0:
                 obj['required'] = required_props
 
+        # Comparison of old spec and new spec:
+        # Old Spec:
+        # parameters:
+        #  - $ref: ../../queries/FA2.0/authorization.header.yaml
+        #  ...
+        #  - name: tag
+        #    in: body
+        #    description: A list of tags to be created or, if already existing, updated.
+        #    required: true
+        #    schema:
+        #      type: array
+        #      items:
+        #        $ref: ../../models/FA2.2/tag.yaml
+        #      minItems: 1
+        #      maxItems: 30
+        #      uniqueItems: true
+        #
+        # New Spec:
+        # parameters:
+        #  - $ref: '#/parameters/Authorization'
+        #  ...
+        #  - x-codegen-request-body-name: tag
+        #    name: tag
+        #    in: body
+        #    description: A list of tags to be created or, if already existing, updated.
+        #    required: true
+        #    schema:
+        #      type: array
+        #      items:
+        #        $ref: '#/definitions/Tag'
+        #      minItems: 1
+        #      maxItems: 30
+        #      uniqueItems: true
+        #
+        # We need to remove the additional x-codegen-request-body-name key in the new spec to match it with the old spec, ensuring that required: true is interpreted correctly by the Swagger JAR.
+
+        elif 'parameters' in obj:
+            for v in obj['parameters']:
+                if isinstance(v, dict):
+                    # If the parameter is marked as required, which needs adjustment for new spec compatibility
+                    if 'required' in v and v['required'] == True:
+                        # Remove the 'x-codegen-request-body-name' key if it exists to ensure 'required: true' works
+                        if 'x-codegen-request-body-name' in v:
+                            del v['x-codegen-request-body-name']
+
         for k, v in obj.items():
             obj[k] = _traverse_required(v)
 
@@ -152,6 +198,96 @@ def _traverse_relative_refs(file, obj):
     else:
         return obj
 
+def resolve_reference(ref_path, root):
+    """Resolve $ref to the actual value."""
+    parts = ref_path.strip('#/').split('/')
+    ref_value = root
+    for part in parts:
+        ref_value = ref_value[part]
+    return deepcopy(ref_value)
+
+def merge_all_of(schema, root):
+    if isinstance(schema, dict):
+        if 'allOf' in schema:
+            # If the allOf only has 1 $ref as its child, remove 'allOf' and merge '$ref' with the rest of the obj
+            if isinstance(schema['allOf'], list) and len(schema['allOf']) == 1:
+                resolved = schema['allOf'][0]
+                del schema['allOf']
+                merged = deep_merge(schema, resolved)
+            else:
+                merged = {}
+                for item in schema['allOf']:
+                    resolved = resolve_references(item, root)
+                    merged = deep_merge(merged, resolved)
+            schema = merged
+        else:
+            for key, value in schema.items():
+                schema[key] = merge_all_of(value, root)
+    elif isinstance(schema, list):
+        schema = [merge_all_of(item, root) for item in schema]
+    return schema
+
+def resolve_references(schema, root):
+    """Resolve $ref properties within the schema."""
+    if isinstance(schema, dict) and '$ref' in schema:
+        ref_schema = resolve_reference(schema['$ref'], root)
+        return merge_all_of(ref_schema, root)
+    return merge_all_of(schema, root)
+
+def deep_merge(a, b):
+    """Deep merge two dictionaries."""
+    result = deepcopy(a)
+    if b is None:
+        return result
+    for key, value in b.items():
+        if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+            result[key] = deep_merge(result[key], value)
+        else:
+            result[key] = deepcopy(value)
+    return result
+
+def process_and_fix_definitions(paths: List):
+    full_paths = [os.path.join(os.getcwd(), path) for path in paths]
+    files = set()
+    for path in full_paths:
+        if os.path.isfile(path):
+            fileName, fileExt = os.path.splitext(path)
+        if fileExt == '.yaml':
+            files.add(path)
+    else:
+        full_paths += glob.glob(path + '/*')
+
+    for file in files:
+        with open(file, 'r') as original_file:
+            yaml_content = yaml.safe_load(original_file)
+            resolved_definitions = {
+                key: resolve_references(value, yaml_content)
+                for key, value in yaml_content['definitions'].items()
+            }
+
+            resolved_test_spec = yaml_content.copy()
+            resolved_test_spec['definitions'] = resolved_definitions
+
+        with open(file, 'w') as modified_file:
+            yaml.dump(resolved_test_spec, modified_file, sort_keys=False)
+
+    # Once references have been inlined, we need to convert from the old "required: true" style for properties to
+    # the new "required:
+    #           -a
+    #           -b
+    #           -c" style
+    for file in files:
+        yaml_obj = _fix_required(file)
+        yaml_out = yaml.dump(yaml_obj)
+        with open(file, "w") as f:
+            f.write(yaml_out)
+
+    # Do any text replacing needed
+    for file in files:
+        # Handle properties with a truthy value for a name
+        replace_text(file, ' on:', ' "on":')
+        replace_text(file, 'On:', '\'On\':')
+        replace_text(file, 'name: on', 'name: "on"')
 
 def process_paths(paths: List):
     """

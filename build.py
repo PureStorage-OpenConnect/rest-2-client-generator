@@ -35,7 +35,7 @@ def determine_versions(source_dir, product, versions):
     if (versions is None or len(versions) == 0):
         prefix = get_product_prefix(product)
         versions = []
-        for entry in os.listdir(os.path.join(source_dir, "specs")):
+        for entry in os.listdir(source_dir):
             filename, extension = os.path.splitext(entry)
             if extension == '.yaml' and filename.endswith('.spec'):
                 filename = filename[:-len('.spec')]
@@ -93,15 +93,11 @@ def build(source: str, build_output_root_dir: str, product: str, language: str, 
     print("Fixing camel case issues")
     fix_camel_case_issues(source_dir)
 
-    # Process the yaml files for models and responses to make them work correctly with code generation
-    print("Fixing references in models and responses")
-    yaml_utils.process_paths(glob.glob(os.path.join(source_dir, 'models', prefix + '*')))
-    yaml_utils.process_paths(glob.glob(os.path.join(source_dir, 'responses', prefix + '*')))
+    print("Fixing references in spec files")
+    yaml_utils.process_and_fix_definitions(glob.glob(os.path.join(source_dir, prefix + '*')))
 
     print("Renaming files named 'array.yaml'")
-    yaml_utils.rename_array_yaml(glob.glob(os.path.join(source_dir, 'models', prefix + '*')))
-    yaml_utils.rename_array_yaml(glob.glob(os.path.join(source_dir, 'responses', prefix + '*')))
-    yaml_utils.rename_array_yaml(glob.glob(os.path.join(source_dir, 'specs', prefix + '*')))
+    yaml_utils.rename_array_yaml(glob.glob(os.path.join(source_dir, prefix + '*')))
 
     first_version = True
 
@@ -125,7 +121,7 @@ def build(source: str, build_output_root_dir: str, product: str, language: str, 
                    swagger_jar,
                    'generate',
                    '-i',
-                   os.path.join(source_dir, 'specs', f"{prefix}{version}.spec.yaml"),
+                   os.path.join(source_dir, f"{prefix}{version}.spec.yaml"),
                    '-o',
                    generator_output_dir,
                    '-l',
