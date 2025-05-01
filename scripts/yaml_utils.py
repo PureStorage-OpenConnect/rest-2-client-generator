@@ -234,6 +234,22 @@ def resolve_references(schema, root):
         return merge_all_of(ref_schema, root)
     return merge_all_of(schema, root)
 
+def resolve_references_with_refs_nested(schema, root):
+    """Resolve $ref properties within the schema."""
+    if isinstance(schema, dict):
+        # Check if $ref exists in the dictionary
+        if '$ref' in schema:
+            ref_schema = resolve_reference(schema['$ref'], root)
+            return merge_all_of(ref_schema, root)
+        else:
+            # Recursive call to resolve $ref within nested dictionaries
+            for key, value in schema.items():
+                schema[key] = resolve_references_with_refs_nested(value, root)
+    elif isinstance(schema, list):
+        # Recursive call to resolve $ref within list elements
+        return [resolve_references_with_refs_nested(item, root) for item in schema]
+    return merge_all_of(schema, root)
+
 def deep_merge(a, b):
     """Deep merge two dictionaries."""
     result = deepcopy(a)
@@ -260,10 +276,12 @@ def process_and_fix_definitions(paths: List):
     for file in files:
         with open(file, 'r') as original_file:
             yaml_content = yaml.safe_load(original_file)
-            resolved_definitions = {
-                key: resolve_references(value, yaml_content)
-                for key, value in yaml_content['definitions'].items()
-            }
+            resolved_definitions = {}
+            for key, value in yaml_content['definitions'].items():
+                if key == 'PortInitiatorTarget':
+                    resolved_definitions[key] = resolve_references_with_refs_nested(value, yaml_content)
+                else:
+                    resolved_definitions[key] = resolve_references(value, yaml_content)
 
             resolved_test_spec = yaml_content.copy()
             resolved_test_spec['definitions'] = resolved_definitions
