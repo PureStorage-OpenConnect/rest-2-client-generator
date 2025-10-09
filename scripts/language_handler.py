@@ -195,6 +195,92 @@ class JavaHandler(LaunguageHandlerBase):
         print(f"  Found {total_duplicate_classes} duplicate classes")
         print(f"  Updated {total_updated_files} files to remove references to duplicates")
 
+
+    def _add_parameter_builders_to_api(self, java_file):
+        with open(java_file, 'r+') as fd:
+            contents = fd.readlines()
+
+            api_call_regex = r'\s*public ([a-zA-Z0-9]+) (api.*(?:Post|Patch|Get|Delete))\((.*)\)'
+            output = []
+
+            for index, line in enumerate(contents):
+                match = re.search(api_call_regex, line)
+                if match:
+                    line_start = match.start()
+                    line_end = match.end()
+                    return_type = match.group(1)
+                    function_name = match.group(2)
+                    parameters = match.group(3)
+                    call_str = line[line_start : line_end]
+                    # print("Found api call: " + call_str)
+                    # print("  return_type: " + return_type)
+                    # print("  function_name: " + function_name)
+                    # print("  parameters: " + parameters)
+
+                    typed_parameters = []
+                    for param in parameters.split(','):
+                        if param.strip() != '':
+                            typed_parameters.append(param.strip().split(' '))
+
+
+                    output.append(f"    public static class {function_name}Params {{\n")
+                    for param in typed_parameters:
+                        output.append(f"        public final {param[0]} {param[1]};\n")
+                    output.append(f"        {function_name}Params(Builder builder) {{\n")
+                    for param in typed_parameters:
+                        output.append(f"            this.{param[1]} = builder.{param[1]};\n")
+                    output.append("        }\n")
+                    output.append("        public static class Builder {\n")
+                    for param in typed_parameters:
+                        output.append(f"            private {param[0]} {param[1]};\n")
+
+                    for param in typed_parameters:
+                        output.append(f"            public Builder {param[1]}({param[0]} {param[1]}) {{\n")
+                        output.append(f"                this.{param[1]} = {param[1]};\n")
+                        output.append(f"                return this;\n")
+                        output.append(f"            }}\n")
+                    output.append(f"            public {function_name}Params Build() {{\n")
+                    output.append(f"                return new {function_name}Params(this);\n")
+                    output.append(f"            }}\n")
+                    output.append(f"        }}\n")
+                    output.append(f"    }}\n")
+                    output.append("\n")
+
+
+                    output.append(f"    public {return_type} {function_name}({function_name}Params params) throws ApiException {{\n")
+                    if return_type == 'void':
+                        output.append(f"        {function_name}(\n")
+                    else:
+                        output.append(f"        return {function_name}(\n")
+                    first = True
+                    for param in typed_parameters:
+                        if not first:
+                            output.append(",\n")
+                        output.append(f"            params.{param[1]}")
+                        first = False
+                    output.append("\n")
+                    output.append("        );\n")
+                    output.append("    }\n")
+                    output.append("\n")
+
+            contents = contents[:-1] + output + contents[-1:]
+
+            fd.seek(0)
+            fd.writelines(contents)
+
+
+    def _add_parameter_builders_to_apis(self, source_root):
+        full_paths = glob.glob(source_root + '/**', recursive=True)
+        for path in full_paths:
+            if os.path.isfile(path):
+                fileName, fileExt = os.path.splitext(path)
+                if fileExt == '.java':
+                    self._add_parameter_builders_to_api(path)
+
+
+
+
+
     def generate_configs(self, config_dir, language, versions, artifact_version):
         """Generate the config files used for this language for each version"""
         # Write configs
@@ -303,6 +389,7 @@ class JavaHandler(LaunguageHandlerBase):
                 if os.path.isdir(tests_path):
                     shutil.rmtree(tests_path)
                 replace_text(os.path.join(common_path, 'pom.xml'), self._get_artifact_id(version), self.common_artifact_id)
+                replace_text(os.path.join(common_path, 'pom.xml'), "<java.version>1.7</java.version>", "<java.version>1.9</java.version>")
                 replace_text(
                     os.path.join(common_path, "src", "main", "java", "com", "purestorage", "rest", self.product, "common", "JSON.java"),
                     f"import {self._get_model_package(version)}.*;", "")
@@ -313,11 +400,15 @@ class JavaHandler(LaunguageHandlerBase):
                 print("Common classes available at: " + common_target_path)
 
             shutil.rmtree(os.path.join(generator_output_dir, "src", "main", "java", "com", "purestorage", "rest", self.product, "common"))
+            replace_text(os.path.join(generator_output_dir, 'pom.xml'), "<java.version>1.7</java.version>", "<java.version>1.9</java.version>")
             self._add_common_dependency_to_pom(os.path.join(generator_output_dir, 'pom.xml'), artifact_version)
+
         print("Removing duplicate models")
         self._remove_duplicate_models((os.path.join(generator_output_dir, "src")))
         print("Adding Shadow Nullable Variables")
         self._modify_shadow_nullable_variables((os.path.join(generator_output_dir, "src")), shadow_nullable_varibles)
+        print("Adding Parameter Builders")
+        self._add_parameter_builders_to_apis(os.path.join(generator_output_dir, 'src/main/java'))
 
 def get_language_handler(product: str, language: str) -> LaunguageHandlerBase:
     if language == 'java':
