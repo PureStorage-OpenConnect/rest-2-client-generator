@@ -230,6 +230,11 @@ class JavaHandler(LaunguageHandlerBase):
                     for param in typed_parameters:
                         output.append(f"            this.{param[1]} = builder.{param[1]};\n")
                     output.append("        }\n")
+
+                    output.append(f"        public static Builder builder() {{\n")
+                    output.append(f"            return new Builder();\n")
+                    output.append(f"        }}\n")
+
                     output.append("        public static class Builder {\n")
                     for param in typed_parameters:
                         output.append(f"            private {param[0]} {param[1]};\n")
@@ -239,7 +244,7 @@ class JavaHandler(LaunguageHandlerBase):
                         output.append(f"                this.{param[1]} = {param[1]};\n")
                         output.append(f"                return this;\n")
                         output.append(f"            }}\n")
-                    output.append(f"            public {function_name}Params Build() {{\n")
+                    output.append(f"            public {function_name}Params build() {{\n")
                     output.append(f"                return new {function_name}Params(this);\n")
                     output.append(f"            }}\n")
                     output.append(f"        }}\n")
