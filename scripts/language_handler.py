@@ -200,7 +200,7 @@ class JavaHandler(LaunguageHandlerBase):
         with open(java_file, 'r+') as fd:
             contents = fd.readlines()
 
-            api_call_regex = r'\s*public ([a-zA-Z0-9]+) (api.*(?:Post|Patch|Get|Delete))\((.*)\)'
+            api_call_regex = r'\s*public ([a-zA-Z0-9]+) (api.*(?:Post|Put|Get|Delete))\((.*)\)'
             output = []
 
             for index, line in enumerate(contents):
